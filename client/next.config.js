@@ -1,18 +1,19 @@
 require("dotenv").config();
 
 /** @type {import('next').NextConfig} */
-
-const nextConfig = {
-  reactStrictMode: true,
-};
-
-module.exports = nextConfig;
-
 module.exports = {
+  reactStrictMode: true,
   env: {
+    // Keep backward compatibility; new vars use NEXT_PUBLIC_ prefix in AuthContext
     THEMOVIEDB_API_KEY: process.env.THEMOVIEDB_API_KEY,
   },
   images: {
-    domains: ["image.tmdb.org", "localhost", "walletconnect.com"],
+    domains: [
+      "covers.openlibrary.org",   // Open Library book covers
+      "openlibrary.org",
+      "image.tmdb.org",           // Legacy (original project)
+      "localhost",
+      "walletconnect.com",
+    ],
   },
 };

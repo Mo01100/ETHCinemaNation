@@ -21,7 +21,7 @@ const CoonectWalletModel = ({ popup, closePopupHandle,connectMetaMask, connectCo
         classNames="popup"
         unmountOnExit
       >
-          <div className="fixed top-0 left-0 w-full h-full flex justify-center items-center">
+          <div className="fixed top-0 left-0 w-full h-full flex justify-center items-center z-[9999]">
             {/* outer layer */}
             <div
               className="w-full h-full z-40 absolute backdrop-brightness-50"

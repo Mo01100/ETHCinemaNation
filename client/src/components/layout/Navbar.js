@@ -55,16 +55,10 @@ const NavBar = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center border-b-2 border-none py-4 md:justify-start md:space-x-10">
             <div className="flex justify-start lg:w-0 lg:flex-1">
-              <Link href="/" className="flex">
-                <Image
-                  className="h-8 w-auto sm:h-10"
-                  src={logo}
-                  width={32}
-                  height={32}
-                  alt="logo"
-                />
-                <span className="self-center pl-3 text-2xl font-semibold whitespace-nowrap dark:text-white">
-                  ETHCinemaNation
+              <Link href="/" className="flex items-center">
+                <span style={{ fontSize: "2rem" }}>📚</span>
+                <span className="self-center pl-3 text-2xl font-semibold whitespace-nowrap dark:text-white" style={{ background: 'linear-gradient(135deg, #a78bfa, #60a5fa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                  ChainReads
                 </span>
               </Link>
             </div>
