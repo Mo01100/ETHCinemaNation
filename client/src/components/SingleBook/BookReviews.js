@@ -6,6 +6,19 @@ import { toast } from "react-toastify";
 import Jazzicon from "react-jazzicon/dist/Jazzicon";
 import { CSSTransition } from "react-transition-group";
 
+// Extract a human-readable reason from an ethers/MetaMask error
+function getRevertReason(err) {
+  // ethers v6 wraps revert reasons here
+  if (err?.reason) return err.reason;
+  // MetaMask / JSON-RPC error message
+  const msg = err?.message || "";
+  const match = msg.match(/execution reverted:?\s*([^"\n]+)/i);
+  if (match) return match[1].trim();
+  // User rejected
+  if (err?.code === 4001 || err?.code === "ACTION_REJECTED") return "Transaction rejected in wallet.";
+  return null;
+}
+
 // ─── Score Slider ────────────────────────────────────────────────────────────
 function ScoreSlider({ label, description, icon, value, onChange }) {
   return (
@@ -106,18 +119,18 @@ function ReviewCard({ review, reviewIndex, userAddress, contract }) {
     }
     setVoting(true);
     try {
-      await toast.promise(
-        contract.voteOnReview(reviewIndex, helpful),
-        {
-          pending: "Submitting vote...",
-          success: "Vote recorded on-chain! 🗳️",
-          error: "Something went wrong.",
-        }
-      );
+      const tx = await contract.voteOnReview(reviewIndex, helpful);
+      await toast.promise(tx.wait(), {
+        pending: "Submitting vote...",
+        success: "Vote recorded on-chain! 🗳️",
+        error: "Vote transaction failed.",
+      });
       setHasVoted(true);
       setLocalVotes((v) => v + (helpful ? 1 : -1));
     } catch (err) {
       console.error("Vote error:", err);
+      const reason = getRevertReason(err);
+      toast.error(reason || "Vote failed. Check the browser console for details.");
     }
     setVoting(false);
   };
@@ -321,24 +334,25 @@ export function BookReviews({
 
   const handleSubmit = async ({ genre, plot, character, world, comment }) => {
     try {
-      await toast.promise(
-        contract.rateBook(bookId, bookName, comment, genre, plot, character, world),
-        {
-          pending: "Submitting your review on-chain...",
-          success: {
-            render() {
-              setIsReview(true);
-              closePopup();
-              getBookRating();
-              getBookReviews();
-              return "Review published on-chain! 🎉";
-            },
+      // Send the transaction and wait for it to be mined
+      const tx = await contract.rateBook(bookId, bookName, comment, genre, plot, character, world);
+      await toast.promise(tx.wait(), {
+        pending: "Submitting your review on-chain...",
+        success: {
+          render() {
+            setIsReview(true);
+            closePopup();
+            getBookRating();
+            getBookReviews();
+            return "Review published on-chain! 🎉";
           },
-          error: "Transaction failed. 😕",
-        }
-      );
+        },
+        error: "Transaction was mined but failed.",
+      });
     } catch (err) {
       console.error("rateBook error:", err);
+      const reason = getRevertReason(err);
+      toast.error(reason || "Transaction failed. Check the browser console for details.");
     }
   };
 

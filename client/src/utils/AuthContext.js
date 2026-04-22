@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, createContext, useEffect, useCallback } from "react";
+import { useState, createContext, useEffect, useCallback, useRef } from "react";
 import abi from "../contracts/BookRatings.json";
 import { ethers, JsonRpcProvider } from "ethers";
 var Web3 = require("web3");
@@ -20,11 +20,12 @@ export const AuthProvider = ({ children }) => {
     balance: null,
   });
 
-  // ⚠️  After deploying BookRatings.sol, paste the deployed address here
-  const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
+  const contractAddress =
+    process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
+    "0x0000000000000000000000000000000000000000";
   const contractABI = abi.abi;
 
-  // Connect in read-only mode (no wallet) on page load
+  // ── Read-only contract (no wallet) on page load ───────────────────────────
   const connectcontract = useCallback(() => {
     try {
       const rpcUrl =
@@ -42,94 +43,126 @@ export const AuthProvider = ({ children }) => {
     connectcontract();
   }, [connectcontract]);
 
-  // Fetch ETH balance for connected account
-  const getaccountdetails = async (accounts) => {
-    const web3 = new Web3(Web3.givenProvider);
-    const balance = await web3.eth.getBalance(accounts[0]);
-    setAccount({
-      address: accounts[0],
-      balance: web3.utils.fromWei(balance, "ether"),
-    });
-  };
+  // ── Rebuild signer + contract for the given address ──────────────────────
+  // Accepts the address string explicitly so there is never a stale-closure
+  // or timing issue with whichever account MetaMask considers "active".
+  const rebuildSigner = useCallback(
+    async (newAddress) => {
+      if (!newAddress || !window.ethereum) return;
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        // Pass the address explicitly – avoids ethers picking the wrong account
+        const signer = await provider.getSigner(newAddress);
+        const actualAddress = await signer.getAddress();
+        console.log("[AuthContext] Signer rebuilt for:", actualAddress);
+        const contract = new ethers.Contract(contractAddress, contractABI, signer);
+        setValue({ provider, signer, contract, isLogged: true });
+        return actualAddress;
+      } catch (err) {
+        console.error("[AuthContext] rebuildSigner failed:", err);
+      }
+    },
+    [contractAddress, contractABI]
+  );
 
-  // ---------- MetaMask ----------
-  const connectMetaMask = async () => {
-    try {
-      const { ethereum } = window;
-      if (!ethereum) {
-        toast.error(
-          "MetaMask not detected. Open this page in Chrome/Brave with the MetaMask extension installed.",
-          { autoClose: 6000 }
-        );
-        // Open MetaMask download in a new tab for convenience
-        window.open("https://metamask.io/download/", "_blank");
+  // ── Handle MetaMask account changes ──────────────────────────────────────
+  const handleAccountsChanged = useCallback(
+    async (accounts) => {
+      console.log("[AuthContext] accountsChanged →", accounts);
+      if (!accounts || accounts.length === 0) {
+        setAccount({ address: null, balance: null });
+        setValue((prev) => ({ ...prev, signer: null, isLogged: false }));
         return;
       }
-      ethereum.on("chainChanged", () => window.location.reload());
-      ethereum.on("accountsChanged", (accounts) => getaccountdetails(accounts));
 
-      const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-      const provider = new ethers.BrowserProvider(ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      const newAddress = accounts[0];
 
-      setValue({ provider, signer, contract, isLogged: true });
-      await getaccountdetails(accounts);
-    } catch (err) {
-      if (err.code === -32002)
-        toast.warning("MetaMask is already open — please check your browser extension.");
-      else if (err.code === 4001)
-        toast.info("Connection cancelled. Please approve the MetaMask request to continue.");
-      console.error("connectMetaMask error:", err);
-    }
-  };
-
-  // ---------- CoinBase ----------
-  const connectCoinBase = async () => {
-    try {
-      const { ethereum } = window;
-      if (!ethereum) {
-        toast.warning("Please install Coinbase Wallet");
-        return;
+      // Update display address + balance
+      try {
+        const web3 = new Web3(Web3.givenProvider);
+        const balance = await web3.eth.getBalance(newAddress);
+        setAccount({
+          address: newAddress,
+          balance: web3.utils.fromWei(balance, "ether"),
+        });
+      } catch (err) {
+        console.error("[AuthContext] Balance fetch failed:", err);
+        setAccount({ address: newAddress, balance: "?" });
       }
-      ethereum.on("chainChanged", () => window.location.reload());
-      ethereum.on("accountsChanged", (accounts) => getaccountdetails(accounts));
 
-      const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-      const provider = new ethers.BrowserProvider(ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      // Rebuild signer + contract for the new account
+      await rebuildSigner(newAddress);
+    },
+    [rebuildSigner]
+  );
 
-      setValue({ provider, signer, contract, isLogged: true });
-      await getaccountdetails(accounts);
-    } catch (err) {
-      console.error("connectCoinBase error:", err);
-    }
-  };
+  // Keep a stable ref to handleAccountsChanged so the event listener
+  // registered once never goes stale (avoids re-registering on every render).
+  const handleAccountsChangedRef = useRef(handleAccountsChanged);
+  useEffect(() => {
+    handleAccountsChangedRef.current = handleAccountsChanged;
+  }, [handleAccountsChanged]);
 
-  // ---------- Phantom ----------
-  const connectPhantom = async () => {
-    try {
-      const { ethereum } = window;
-      if (!ethereum) {
-        toast.warning("Please install Phantom Wallet");
-        return;
+  // ── Shared wallet connect logic ───────────────────────────────────────────
+  const connectWallet = useCallback(
+    async (walletName) => {
+      try {
+        const { ethereum } = window;
+        if (!ethereum) {
+          toast.error(
+            walletName === "MetaMask"
+              ? "MetaMask not detected. Install the MetaMask extension and reload."
+              : `Please install ${walletName} Wallet.`,
+            { autoClose: 6000 }
+          );
+          if (walletName === "MetaMask")
+            window.open("https://metamask.io/download/", "_blank");
+          return;
+        }
+
+        // Register event listeners only once using stable refs
+        if (!ethereum._agListenersAttached) {
+          ethereum.on("chainChanged", () => window.location.reload());
+          ethereum.on("accountsChanged", (accs) =>
+            handleAccountsChangedRef.current(accs)
+          );
+          ethereum._agListenersAttached = true;
+        }
+
+        const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+        if (!accounts || accounts.length === 0) {
+          toast.error("No accounts returned from wallet.");
+          return;
+        }
+
+        const address = accounts[0];
+        const actualAddress = await rebuildSigner(address);
+
+        // Update address + balance
+        try {
+          const web3 = new Web3(Web3.givenProvider);
+          const balance = await web3.eth.getBalance(address);
+          setAccount({
+            address: actualAddress || address,
+            balance: web3.utils.fromWei(balance, "ether"),
+          });
+        } catch {
+          setAccount({ address: actualAddress || address, balance: "?" });
+        }
+      } catch (err) {
+        if (err.code === -32002)
+          toast.warning("Wallet popup already open — check your browser extension.");
+        else if (err.code === 4001)
+          toast.info("Connection cancelled.");
+        console.error(`[AuthContext] connect${walletName} error:`, err);
       }
-      ethereum.on("chainChanged", () => window.location.reload());
-      ethereum.on("accountsChanged", (accounts) => getaccountdetails(accounts));
+    },
+    [rebuildSigner]
+  );
 
-      const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-      const provider = new ethers.BrowserProvider(ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(contractAddress, contractABI, signer);
-
-      setValue({ provider, signer, contract, isLogged: true });
-      await getaccountdetails(accounts);
-    } catch (err) {
-      if (err.code === -32002) toast.warning("Please open Phantom and login.");
-      console.error("connectPhantom error:", err);
-    }
-  };
+  const connectMetaMask = useCallback(() => connectWallet("MetaMask"), [connectWallet]);
+  const connectCoinBase = useCallback(() => connectWallet("Coinbase"), [connectWallet]);
+  const connectPhantom  = useCallback(() => connectWallet("Phantom"),  [connectWallet]);
 
   const AuthValue = {
     connectMetaMask,

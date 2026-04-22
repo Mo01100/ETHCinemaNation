@@ -93,6 +93,16 @@ export function SingleBook({ bookId }) {
 
   useEffect(() => { fetchBookDetails(); }, [fetchBookDetails]);
   useEffect(() => { fetchRating(); fetchReviews(); }, [fetchRating, fetchReviews]);
+
+  // When address changes (account switch), immediately reset isReview so the
+  // Write Review button is not stuck hidden from the previous account's state.
+  // Then re-check whether the new account has already reviewed this book.
+  useEffect(() => {
+    setIsReview(false);
+    if (isLogged && address) checkAlreadyReviewed();
+  }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Also run on first login
   useEffect(() => { if (isLogged) checkAlreadyReviewed(); }, [isLogged, checkAlreadyReviewed]);
 
   return (
